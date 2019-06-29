@@ -1,3 +1,4 @@
+library('tidyverse')
 load('acting.Rdata')
 load('genres.Rdata')
 
