@@ -1,7 +1,11 @@
 library('tidyverse')
+install.packages('boot')
+library('boot')
+
+getwd()
+setwd("c:/users/sislam/documents/PredictingMovieGenre-Master")
 load('acting.Rdata')
 load('genres.Rdata')
-
 #clustering actors
 data_long <- inner_join(acting, genres_readable, by = c('movie_id' = 'id','title'))
 
@@ -21,7 +25,6 @@ data5 <- inner_join(data_cgenre,data4_cactor,by='actor_id')
 colnames(data5)<-c('actor_id','genre','g_count','a_count')
 data5$genre_prop<-data5$g_count/data5$a_count
 data6 <- data5[,c('actor_id','genre','genre_prop')]
-data_wide
 data_wide<- spread(data6,genre,genre_prop)
 data_wide[is.na(data_wide)]<-0
 nrow(data_wide)
@@ -121,6 +124,7 @@ test_5 <- unique(test_4)
 test_6 <- test_5[,-2]
 test_7 <- unique(test_6)
 colnames(test_7) <- c('movie_id','director_id','actor_group','count')
+test_7
 test_8 <- spread(test_7,actor_group,count)
 test_9 <- unique(test_5[,c(-4,-5)])
 
@@ -131,47 +135,89 @@ colnames(test_10)<-c('movie_id','genre','director_id','g_1','g_2','g_3','g_4','g
 test_11 <- inner_join(test_10,director_group)
 test_11
 test_11 %>% group_by(genre) %>% summarise(n())
-e_genre <- test_11 %>% group_by(genre) %>% summarise(n()) %>% filter(`n()`>30) #taking out genres w/ less than 30 data points
+e_genre <- test_11 %>% group_by(genre) %>% summarise(n()) %>% filter(`n()`>100) #taking out genres w/ less than 100 data points
 t11 <- test_11[test_11$genre %in% e_genre$genre,]
+t11 %>% group_by(genre) %>% summarise(n())
 #creating test and training set
-test.sample <- sample(nrow(test_11), floor(nrow(test_11)*.1))
+test.sample <- sample(nrow(t11), floor(nrow(t11)*.2))
 test <- t11[test.sample,]
 train <- t11[-test.sample,]
+test %>% group_by(genre) %>% summarise(n())
+train %>% group_by(genre) %>% summarise(n())
+correct <- c()
+false_positives <- c()
+random_correct <- c()
+random_false_pos <- c()
+c_correct <- c()
+cfp <- c()
+crc <- c()
+crfp <- c()
+c_row <- c()
 
-acc <- c()
-fal <- c()
 
 #running logit regression to predict each genre of movies using #of actors in each group and director group and finding false positives and accurate positives
 for(i in 1:length(unique(train$genre))){
   gen<-unique(train$genre)[i]
   tr2 <- train
-  tr2$genre<-if_else(tr2$genre==gen,1,0)
-  neg <- unique(tr2[!tr2$movie_id %in% tr2[tr2$genre==1,]$movie_id,])
-  pos<-tr2[tr2$movie_id %in% tr2[tr2$genre==1,]$movie_id&tr2$genre==1,]
-  tr3 <- rbind(neg,pos)
+  tr2$genre <- if_else(tr2$genre==gen,1,0)
+  yes <- tr2[tr2$genre==1,]
+  dedup <- duplicated(yes$movie_id)
+  yes <- yes[!dedup,]
+  
+  no <- tr2[!tr2$movie_id %in% yes$movie_id,]
+  dedup2 <- duplicated(no$movie_id)
+  no <- no[!dedup2,]
+  tr3 <- rbind(yes,no)
   logit.fit <- glm(as.factor(genre) ~ as.factor(director_group)+g_1+g_2+g_3+g_4+g_5, data =tr3,family = "binomial")
   
   t2 <- test
-  t2$genre<-if_else(t2$genre==gen,1,0)
-  neg <- unique(t2[!t2$movie_id %in% t2[t2$genre==1,]$movie_id,])
-  pos<-t2[t2$movie_id %in% t2[t2$genre==1,]$movie_id&t2$genre==1,]
-  t3 <- rbind(neg,pos)
-  
+  t2$genre <- if_else(t2$genre==gen,1,0)
+  yes <- t2[t2$genre==1,]
+  dedup <- duplicated(yes$movie_id)
+  yes <- yes[!dedup,]
+  no <- t2[!t2$movie_id %in% yes$movie_id,]
+  dedup2 <- duplicated(no$movie_id)
+  no <- no[!dedup2,]
+  t3 <- rbind(yes,no)
+
   logit.predict <- predict(logit.fit,t3,type='response')
   pred <- ifelse(logit.predict>=.5,1,0)
   t3$predict <- pred
-  p <- nrow(t3[t3$genre==t3$predict,])/nrow(t3)
-  negs <- t3[t3$movie_id %in% neg$movie_id,]
-  fp <- nrow(negs[negs$genre!=negs$predict,])/nrow(negs)
-  acc <- c(acc,p)
-  fal <- c(fal,fp)
+  
+  random <- sample(c(0,1),replace = TRUE,nrow(t3))
+  t3$Random <- random
+  
+  c <- nrow(t3[t3$genre==t3$predict,])/nrow(t3)
+  cc <- nrow(t3[t3$genre==t3$predict,])
+  c_row <- c(c_row,nrow(t3))
+
+  true_neg <- nrow(t3[t3$genre == 0,])
+  pred_fp <- nrow(t3[t3$genre == 0 & t3$predict==1,])
+  fp <- pred_fp/(true_neg+pred_fp)
+ 
+  rc<- nrow(t3[t3$genre==t3$Random,])/nrow(t3)
+  rand_fp <- nrow(t3[t3$genre == 0 & t3$Random==1,])
+  rfp <- rand_fp/(true_neg+rand_fp)
+
+  correct <- c(correct,c)
+  false_positives <- c(false_positives,fp)
+  random_correct <- c(random_correct,rc)
+  random_false_pos <- c(random_false_pos,rfp)
+  c_correct <- c(c_correct,nrow(t3[t3$genre==t3$predict,]))
+  cfp <-c(cfp,pred_fp)
+  crc <- c(crc,nrow(t3[t3$genre==t3$Random,]))
+  crfp <- c(crfp,rand_fp)
   
 }
 
-#creating table of false positives and accurate predictions by genre
+#creating table of false positives and accurate predictions compared against random chance by genre
 length(unique(train$genre))
 genre_names<-unique(train$genre)
-g_count <- test_11 %>% group_by(genre) %>% summarise(n()) %>% filter(`n()`>30)
-g<-data.frame(genre_names,acc,fal)
-inner_join(g,g_count,by=c('genre_names'='genre'))
-g_count
+g_count <- test %>% group_by(genre) %>% summarise(n())
+g<-data.frame(genre_names,correct,false_positives,random_correct,random_false_pos)
+final_data <- inner_join(g,g_count,by=c('genre_names'='genre'))
+colnames(final_data) <- c("Genre", "Pred Correct", "False +", "Rand Correct", "Random False +", "Genre Count")
+g_count<-data.frame(c_correct,cfp,crc,crfp,c_row)
+colnames(g_count) <- c("#Pred Correct", "#False +", "#Rand Correct", "#Random False +", "Total Movie Count")
+write.csv(final_data,"final_data.csv")
+write.csv(g_count,"final_data_count.csv")
